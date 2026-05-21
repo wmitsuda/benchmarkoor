@@ -28,7 +28,7 @@ import (
 
 const (
 	// DefaultReadyTimeout is the default timeout for waiting for RPC to be ready.
-	DefaultReadyTimeout = 10 * time.Minute
+	DefaultReadyTimeout = 2 * time.Hour
 
 	// DefaultHealthCheckInterval is the interval between health checks.
 	DefaultHealthCheckInterval = 1 * time.Second
