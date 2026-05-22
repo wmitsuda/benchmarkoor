@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/ethpandaops/benchmarkoor/pkg/client"
@@ -209,6 +210,12 @@ func (r *runner) runTestsWithContainerStrategy(
 	startTime := time.Now()
 	currentContainerID := containerID
 	currentContainerIP := containerIP
+
+	// prevMountCleanup holds the previous test's fresh-mount cleanup so we
+	// can unmount it as soon as the next test starts, capping simultaneously-
+	// mounted fresh overlays at 1 instead of letting them accumulate until
+	// end-of-instance.
+	var prevMountCleanup func()
 
 	for i, test := range tests {
 		select {
@@ -538,6 +545,14 @@ func (r *runner) runTestsWithContainerStrategy(
 				"Container removed for recreate",
 			)
 
+			// Unmount the previous test's fresh datadir now that its
+			// container is gone. Without this, every test's overlay upper
+			// layer accumulates on disk until end-of-instance.
+			if prevMountCleanup != nil {
+				prevMountCleanup()
+				prevMountCleanup = nil
+			}
+
 			// Create a fresh data volume/datadir for the new container.
 			newSpec := *params.ContainerSpec
 			newSpec.Name = fmt.Sprintf("%s-%d", params.ContainerSpec.Name, i)
@@ -556,7 +571,12 @@ func (r *runner) runTestsWithContainerStrategy(
 			}
 
 			if mountCleanup != nil {
-				*cleanupFuncs = append(*cleanupFuncs, mountCleanup)
+				// Wrap so the inline drain on next iteration and the
+				// outer defer chain are safe to both call this.
+				var once sync.Once
+				wrapped := func() { once.Do(mountCleanup) }
+				*cleanupFuncs = append(*cleanupFuncs, wrapped)
+				prevMountCleanup = wrapped
 			}
 
 			// Replace the data mount (index 0) with the fresh one.
